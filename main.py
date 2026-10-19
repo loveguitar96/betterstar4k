@@ -150,6 +150,9 @@ mute = False
 
 crawllen = 40
 
+##per-slide sounds: {"cc": {"enabled": True, "file": ""}, ...}
+slidesounds = {}
+
 try:
     import conf
     #you can sorta tell what order we implemented these in
@@ -212,6 +215,7 @@ try:
     tidal = getattr(conf, "tidal", ("", "", "", ""))
     framerate = getattr(conf, "framerate", 60)
     efullscreen = getattr(conf, "efullscreen", False)
+    slidesounds = getattr(conf, "slidesounds", {})
 except ModuleNotFoundError:
     print("Configuration not found! Try saving your configuration again.")
     exit(1)
@@ -1686,10 +1690,56 @@ if mute:
     musicch = None
     voicech = None
     beepch = None
+    slidech = None
 else:
     musicch = pg.mixer.Channel(0)
     voicech = pg.mixer.Channel(1)
     beepch = pg.mixer.Channel(2)
+    slidech = pg.mixer.Channel(3)
+
+#per-slide sounds
+narration_dir = "narrations"
+slide_sound_cache = {}
+slidecounter = 0            # increments every time a new slide starts
+last_sound_counter = -1
+last_sound_ldlmode = False
+
+def load_slide_sound(path):
+    # returns a Sound or None, cached so each file is only loaded once
+    if path not in slide_sound_cache:
+        snd = None
+        if path and os.path.isfile(path):
+            try:
+                snd = pg.mixer.Sound(path)
+            except Exception:
+                print(tb.format_exc())
+        slide_sound_cache[path] = snd
+    return slide_sound_cache[path]
+
+def play_slide_sound(sl):
+    if mute or slidech is None:
+        return
+
+    cfg = slidesounds.get(sl, {})
+    if isinstance(cfg, bool):        # allow a plain True/False
+        cfg = {"enabled": cfg}
+    elif isinstance(cfg, str):       # allow a plain path
+        cfg = {"enabled": True, "file": cfg}
+
+    if not cfg.get("enabled", True):
+        return
+
+    custom = cfg.get("file", "")
+    default = os.path.join(narration_dir, f"{sl}.flac")
+
+    snd = load_slide_sound(custom) if custom else None
+    if snd is None:
+        if custom:
+            print(f"Sound '{custom}' for slide '{sl}' not found, using default narration.")
+        snd = load_slide_sound(default)
+
+    if snd:
+        slidech.play(snd)
 
 for ext in ext_loaded:
     if 'init' in ext:
@@ -2143,7 +2193,9 @@ while working:
         global crawling
         global ldlon
         global generaldrawidx
+        global slidecounter
         generaldrawidx = 0
+        slidecounter += 1
         radartime = radarint*6 + radarhold
         slideidx += 1
         bg_g = draw_palette_gradient(pg.Rect(0, 0, screenw, 315), [*bg_c, bg_c[-1]])
@@ -2197,6 +2249,12 @@ while working:
         slideinterval -= delta*seconds
     
     slide = flavor[slideidx]
+
+    # play the per-slide sound when a slide appears in forecast mode
+    if not ldlmode and (slidecounter != last_sound_counter or last_sound_ldlmode):
+        play_slide_sound(slide)
+    last_sound_counter = slidecounter
+    last_sound_ldlmode = ldlmode
     
     if slide == "intro" and not intropicked:
         introtx = rd.choice(intros)
