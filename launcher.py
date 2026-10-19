@@ -13,6 +13,10 @@ import random
 
 os.chdir(os.path.dirname(os.path.abspath(__file__))) #do this or everything explodes
 
+#per-slide sounds: should the checkbox start ticked for slides that have no saved setting?
+#(a ticked slide with no custom file plays narrations/<slide id>.flac if it exists)
+DEFAULT_SOUND_ENABLED = True
+
 #did you know?
 #i know i did
 #probably because i made the thing
@@ -30,6 +34,7 @@ tips = [
     "Flavor options let you customize the timing of slides during a Local Forecast!",
     "You can specify different logos for your main display and radar!",
     "FreeStar 4000 was originally a Python recreation of ws4k+ before becoming an original project!",
+    "You can set a sound for each slide in the Flavor tab. Leave it blank to use the default narration!",
     "Mow" #GET OUT OF MY HEAD GET OUT OF MY HEAD GET OUT OF MY HEAD
 ]
 
@@ -225,7 +230,7 @@ class DidYouKnow(wx.Dialog):
 
 class Launcher(wx.Frame):
     def __init__(self):
-        super().__init__(parent=None, title="FreeStar 4k Launcher", size=(810, 540))
+        super().__init__(parent=None, title="FreeStar 4k Launcher", size=(810, 620))
         
         panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
@@ -891,6 +896,22 @@ class Launcher(wx.Frame):
         spincts = {}
         spinctd = {}
 
+        #per-slide sound widgets, keyed by slide id (cc, lf, xf, ...)
+        soundchk = {}
+        soundpick = {}
+        existing_sounds = existing_conf.get("slidesounds", {})
+
+        def get_sound_cfg(sid):
+            #returns (enabled, file) for a slide id, accepting the formats main.py accepts
+            cfg = existing_sounds.get(sid, None)
+            if cfg is None:
+                return DEFAULT_SOUND_ENABLED, ""
+            if isinstance(cfg, bool):
+                return cfg, ""
+            if isinstance(cfg, str):
+                return True, cfg
+            return bool(cfg.get("enabled", True)), cfg.get("file", "")
+
         def addPageSelector(name, sid, desc="", length=10):
             newpage = wx.Panel(self.flavori)
             sizer = wx.BoxSizer(wx.VERTICAL)
@@ -916,6 +937,42 @@ class Launcher(wx.Frame):
             ps.Add(txx, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             ps.Add(tm, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
             sizer.Add(pan, 0, wx.ALL | wx.ALIGN_CENTER_HORIZONTAL, 2)
+
+            #slide sound: tick the box to enable, then optionally pick a file.
+            #blank file = default narration (narrations/<sid>.flac)
+            sbox = wx.StaticBoxSizer(wx.VERTICAL, newpage, "Slide Sound")
+            sbp = sbox.GetStaticBox()
+            enabled, sfile = get_sound_cfg(sid)
+            schk = wx.CheckBox(sbp, label="Play a sound when this slide appears")
+            schk.SetValue(enabled)
+            schk.SetToolTip(wx.ToolTip("Plays when this slide appears during a Local Forecast. Never plays in LDL mode."))
+            sbox.Add(schk, 0, wx.ALL, 2)
+            srow = wx.BoxSizer(wx.HORIZONTAL)
+            spick = wx.FilePickerCtrl(sbp, path=sfile, message=f"Select a sound for {name}",
+                                      wildcard="Audio files|*.flac;*.wav;*.ogg;*.mp3|All files|*.*",
+                                      style=wx.FLP_OPEN | wx.FLP_USE_TEXTCTRL)
+            sclear = wx.Button(sbp, label="Default")
+            sclear.SetToolTip(wx.ToolTip(f"Clear the custom sound and use narrations/{sid}.flac"))
+            srow.Add(spick, 1, wx.ALL | wx.EXPAND, 2)
+            srow.Add(sclear, 0, wx.ALL | wx.ALIGN_CENTER_VERTICAL, 2)
+            sbox.Add(srow, 0, wx.ALL | wx.EXPAND, 2)
+            shint = wx.StaticText(sbp, label=f"Blank = default narration (narrations/{sid}.flac)")
+            sbox.Add(shint, 0, wx.ALL, 2)
+            sizer.Add(sbox, 0, wx.ALL | wx.EXPAND, 4)
+
+            spick.Enable(enabled)
+            sclear.Enable(enabled)
+
+            def on_sound_toggle(event, c=schk, p=spick, b=sclear):
+                p.Enable(c.GetValue())
+                b.Enable(c.GetValue())
+            def on_sound_clear(event, p=spick):
+                p.SetPath("")
+            schk.Bind(wx.EVT_CHECKBOX, on_sound_toggle)
+            sclear.Bind(wx.EVT_BUTTON, on_sound_clear)
+
+            soundchk[sid] = schk
+            soundpick[sid] = spick
 
             self.flavori.AddPage(newpage, name)
 
@@ -1157,6 +1214,13 @@ class Launcher(wx.Frame):
             items.append(("tidal", (t1i.GetValue(), t2i.GetValue(), t1n.GetValue(), t2n.GetValue())))
             items.append(("framerate", framerate.GetValue()))
             items.append(("efullscreen", efullscreen.GetValue()))
+
+            #per-slide sounds: {"cc": {"enabled": True, "file": ""}, ...}
+            items.append(("slidesounds", {
+                sid: {"enabled": soundchk[sid].GetValue(), "file": soundpick[sid].GetPath()}
+                for sid in soundchk
+            }))
+
             iv = ins.GetValue()
             try:
                 iv = int(iv)
